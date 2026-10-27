@@ -52,7 +52,7 @@ jobs:
           start=$(date +%s)
           # A failed test must not stop the step before the Summary is written.
           set +e
-          robot --outputdir results --name "API tests ${RUN}" tests
+          robot --outputdir results --name "API tests ${RUN}" tests/*.robot
           rc=$?
           set -e
           seconds=$(( $(date +%s) - start ))

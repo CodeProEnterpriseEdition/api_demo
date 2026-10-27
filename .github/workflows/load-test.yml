@@ -1,0 +1,187 @@
+# Load test: the same Robot test (tests/load-test) computes in headless
+# Chromium for the given time, in its own container with the machine's
+# limits. Threads set how much processor the run wants: 1 = half of a CPU
+# limit of 2, 2 = the whole limit, 4 = more than the limit (the machine holds
+# it back). The result is computations per minute, also minute by minute.
+#
+# Comparison: run it alone first, then at the same time in the other test
+# repos (each has the same test). If the numbers drop when the others run,
+# the runs slow each other down despite their limits (shared physical cores,
+# disk). Start Maintenance: load monitor first to see the whole machine.
+
+name: "Load test: parallel Robot runs"
+run-name: "Load test: ${{ inputs.runs }} x ${{ inputs.duration }} min, ${{ inputs.threads }} threads"
+
+on:
+  workflow_dispatch:
+    inputs:
+      threads:
+        description: "Threads the test computes in: 1 = half of a CPU limit of 2, 2 = the whole limit, 4 = more than the limit"
+        type: choice
+        options: ["2", "1", "4"]
+        default: "2"
+      duration:
+        description: "Duration of one run in minutes"
+        default: "5"
+        required: true
+      runs:
+        description: "How many runs. They go at the same time only if this repo has as many runners, otherwise one after another."
+        type: choice
+        options: ["1", "2", "3"]
+        default: "1"
+      image:
+        description: "Test image (current = the version in use on the machine; to try out a version, give it exactly, e.g. localhost:5000/robot-tests:2026.10.21-2)"
+        default: "localhost:5000/robot-tests:current"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    name: Run ${{ matrix.run }}
+    runs-on: [self-hosted, Linux, X64, api-demo]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(inputs.runs == '1' && '[1]' || inputs.runs == '2' && '[1,2]' || '[1,2,3]') }}
+
+    container:
+      image: ${{ inputs.image }}
+
+    steps:
+      - name: Get the test from the repo
+        uses: actions/checkout@v5
+
+      - name: Run the load test
+        env:
+          RUN: ${{ matrix.run }}
+          RUNS: ${{ inputs.runs }}
+          THREADS: ${{ inputs.threads }}
+          DURATION: ${{ inputs.duration }}
+          IMAGE: ${{ inputs.image }}
+          REPO: ${{ github.repository }}
+          RUNNER: ${{ runner.name }}
+        run: |
+          set -eu
+          counter() { awk -v k="$1" '$1 == k { print $2 }' "$2"; }
+          cg=/sys/fs/cgroup
+          cpu_start=$(counter usage_usec $cg/cpu.stat)
+          throttled_start=$(counter throttled_usec $cg/cpu.stat)
+          times_start=$(counter nr_throttled $cg/cpu.stat)
+          start=$(date +%s)
+          started=$(date -u +%H:%M:%S)
+
+          set +e
+          robot --outputdir results --name "Load test ${RUN}" \
+            --variable "DURATION_MIN:${DURATION}" --variable "THREADS:${THREADS}" \
+            tests/load-test/load-test.robot
+          rc=$?
+          set -e
+
+          end=$(date +%s)
+          ended=$(date -u +%H:%M:%S)
+          seconds=$((end - start))
+          rounds=$(cat results/rounds.txt 2>/dev/null || echo 0)
+          computations=$((rounds * THREADS))
+          # Per minute over the computing time (round-times.txt: seconds from
+          # the start of computing to the end of each round).
+          per_min=0
+          by_minute="-"
+          if [ -s results/round-times.txt ]; then
+            per_min=$(awk -v t="${THREADS}" '{ n++; last = $1 } END { printf "%.1f", (last > 0 ? n * t * 60 / last : 0) }' results/round-times.txt)
+            by_minute=$(awk -v t="${THREADS}" -v d="${DURATION}" '{ m = int($1 / 60); if (m < d) c[m]++ }
+              END { for (i = 0; i < d; i++) printf "%s%d", (i ? " · " : ""), c[i] * t }' results/round-times.txt)
+          fi
+          cpu_s=$(awk -v a="$cpu_start" -v b="$(counter usage_usec $cg/cpu.stat)" 'BEGIN { printf "%.0f", (b - a) / 1e6 }')
+          cpu_avg=$(awk -v c="$cpu_s" -v k="$seconds" 'BEGIN { printf "%.1f", (k > 0 ? c / k : 0) }')
+          throttled_s=$(awk -v a="$throttled_start" -v b="$(counter throttled_usec $cg/cpu.stat)" 'BEGIN { printf "%.1f", (b - a) / 1e6 }')
+          times=$(( $(counter nr_throttled $cg/cpu.stat) - times_start ))
+          limit=$(awk '{ if ($1 == "max") print "no limit"; else printf "%g", $1 / $2 }' $cg/cpu.max)
+          mem_peak=$(awk '{ printf "%.2f GiB", $1 / 1073741824 }' $cg/memory.peak 2>/dev/null || echo "unknown")
+          mem_limit=$(awk '{ if ($1 == "max") print "no limit"; else printf "%.1f GiB", $1 / 1073741824 }' $cg/memory.max)
+          oom=$(counter oom_kill $cg/memory.events)
+          if [ "$rc" -eq 0 ]; then result="✅ PASS"; else result="❌ FAIL"; fi
+          # The build workflow writes the version into the image (IMAGE_VERSION).
+          if [ -n "${IMAGE_VERSION:-}" ]; then
+            version="${IMAGE_VERSION} (built ${IMAGE_BUILT:-?})"
+          else
+            version="⚠️ unknown: the image has no version label (not built with Maintenance: build test image)"
+          fi
+
+          {
+            if [ "$RUN" = 1 ]; then
+              printf '_Headless Chromium computes in %s threads for %s min (no network), in its own container with the machine'"'"'s limits. Computations per minute tell how much work the run got done. Compare the same threads alone and at the same time as the other test repos. Minute by minute shows when the others started or ended. The comparison table is in the Summary section at the end._\n\n' "$THREADS" "$DURATION"
+            fi
+            printf '## Run %s/%s: %s\n\n' "$RUN" "$RUNS" "$result"
+            printf '| | |\n|---|---|\n'
+            printf '| Repo | %s |\n' "$REPO"
+            printf '| Runner | %s |\n' "$RUNNER"
+            printf '| Time (UTC) | %s–%s (%s s) |\n' "$started" "$ended" "$seconds"
+            printf '| Threads | %s (CPU limit of the run: %s logical processors) |\n' "$THREADS" "$limit"
+            printf '| Computations | %s (%s rounds x %s threads) = **%s / min** |\n' "$computations" "$rounds" "$THREADS" "$per_min"
+            printf '| Minute by minute | %s |\n' "$by_minute"
+            printf '| CPU time | %s s = on average %s logical processors (limit %s) |\n' "$cpu_s" "$cpu_avg" "$limit"
+            printf '| Throttled by CPU limit | %s s (%s times) |\n' "$throttled_s" "$times"
+            printf '| Memory peak | %s (limit %s) |\n' "$mem_peak" "$mem_limit"
+            printf '| Out of memory (OOM) | %s times |\n' "$oom"
+            printf '| Image | `%s` |\n' "$IMAGE"
+            printf '| Image version | %s |\n' "$version"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Image and row for the Summary job's table.
+          printf '`%s`, version %s\n' "$IMAGE" "$version" > "results/image-${RUN}.txt"
+          printf '| %s | %s | %s–%s | %s s | %s | %s | %s | %s s | %s | %s | %s |\n' \
+            "$RUN" "$RUNNER" "$started" "$ended" "$seconds" "$THREADS" "$per_min" "$by_minute" \
+            "$throttled_s" "$cpu_avg" "$mem_peak" "$result" > "results/row-${RUN}.md"
+          exit "$rc"
+
+      - name: Save the results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: load-${{ matrix.run }}
+          path: results/
+          retention-days: 7
+
+  summary:
+    name: Summary
+    needs: load
+    if: always()
+    runs-on: [self-hosted, Linux, X64, api-demo]
+    timeout-minutes: 5
+    steps:
+      # Remove the previous run's results so no old rows end up in the table.
+      - name: Clear old results
+        run: rm -rf results
+
+      # Each run into its own folder (results/load-N), because the runs'
+      # Robot files have the same names.
+      - name: Get the runs' results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: load-*
+          path: results
+
+      - name: Build the table
+        env:
+          RUNS: ${{ inputs.runs }}
+          THREADS: ${{ inputs.threads }}
+          DURATION: ${{ inputs.duration }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "## Load test: ${REPO}, ${RUNS} run(s), ${DURATION} min, ${THREADS} threads"
+            echo
+            echo "Image: $(cat results/load-*/image-*.txt 2>/dev/null | sort -u | paste -sd ';' || echo '?')"
+            echo
+            echo "| Run | Runner | Time (UTC) | Duration | Threads | Computations / min | Minute by minute | Throttled by CPU limit | CPU avg. (logical) | Memory peak | Result |"
+            echo "|---|---|---|---|---|---|---|---|---|---|---|"
+            cat results/load-*/row-*.md 2>/dev/null | sort -n -t '|' -k 2 || echo "| – | no results | | | | | | | | | |"
+            echo
+            echo "Computations / min tell how much work the run got done. Compare the same threads alone and with the other test repos running at the same time."
+            echo "Minute by minute shows the computations of each minute: a drop shows when other runs took a share of the machine."
+            echo "Throttling means the run would have wanted more processor than its CPU limit allowed."
+            echo "CPU means processing time of logical processors, not physical cores."
+          } >> "$GITHUB_STEP_SUMMARY"

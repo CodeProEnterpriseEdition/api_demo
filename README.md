@@ -12,11 +12,12 @@ saman testikoneen (win-agent-15).
 | Label | `api-demo` |
 | Testikuva | `localhost:5000/robot-tests:current` (koneen paikallinen rekisteri) |
 
-## Työnkulku
+## Työnkulut
 
-**API tests: Tampere open data** (Actions-välilehti): testit 1–3 kertaa
-yhtä aikaa, jokainen ajo omassa kontissaan koneen rajoilla. Summary-sivulla
-on jokaisen testin tulos ja lopuksi ajojen vertailutaulukko.
+| Työnkulku | Mitä tekee |
+|---|---|
+| **API tests: Tampere open data** | API-testit 1–3 kertaa, jokainen ajo omassa kontissaan koneen rajoilla. Summary-sivulla on jokaisen testin tulos ja lopuksi ajojen vertailutaulukko. Ajaa vain `tests/*.robot`, ei kuormatestiä. |
+| **Load test: parallel Robot runs** | Sama kuormatesti kuin repoissa oma_runner ja robot_demo (`tests/load-test/`), jotta kolmen repon ajoja voi verrata yksin ja rinnakkain. Säikeet: 1 = puolet ajon CPU-rajasta, 2 = koko raja, 4 = yli rajan. Summary näyttää laskennat minuutissa, myös minuutti minuutilta. |
 
 ## Testit (`tests/`)
 
