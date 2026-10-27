@@ -1,0 +1,134 @@
+# API tests: Robot Framework tests against the City of Tampere's open APIs
+# (Nysse public transport, open data portal, drinking water quality, news
+# feed). Light runs: no browser, mostly waiting for the network. Run 1-3 runs
+# at the same time to see how light runs share the machine with the heavier
+# test repos. The Summary job collects the runs into one table.
+
+name: "API tests: Tampere open data"
+run-name: "API tests: ${{ inputs.runs }} runs"
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "How many runs at the same time"
+        type: choice
+        options: ["1", "2", "3"]
+        default: "1"
+      image:
+        description: "Test image (current = the version in use on the machine)"
+        default: "localhost:5000/robot-tests:current"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: Run ${{ matrix.run }}
+    runs-on: [self-hosted, Linux, X64, api-demo]
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(inputs.runs == '3' && '[1,2,3]' || inputs.runs == '2' && '[1,2]' || '[1]') }}
+
+    container:
+      image: ${{ inputs.image }}
+
+    steps:
+      - name: Get the tests from the repo
+        uses: actions/checkout@v5
+
+      - name: Run the API tests
+        env:
+          RUN: ${{ matrix.run }}
+          RUNS: ${{ inputs.runs }}
+          IMAGE: ${{ inputs.image }}
+          RUNNER: ${{ runner.name }}
+        run: |
+          set -eu
+          started=$(date -u +%H:%M:%S)
+          start=$(date +%s)
+          # A failed test must not stop the step before the Summary is written.
+          set +e
+          robot --outputdir results --name "API tests ${RUN}" tests
+          rc=$?
+          set -e
+          seconds=$(( $(date +%s) - start ))
+          ended=$(date -u +%H:%M:%S)
+          mem_peak=$(awk '{ printf "%.2f GiB", $1 / 1073741824 }' /sys/fs/cgroup/memory.peak 2>/dev/null || echo "unknown")
+          if [ "$rc" -eq 0 ]; then result="✅ PASS"; else result="❌ FAIL"; fi
+
+          # One row per test from Robot's output.xml.
+          python3 - "$RUN" "$RUNS" "$result" > results/summary.md <<'EOF'
+          import sys
+          from robot.api import ExecutionResult
+          run, runs, result = sys.argv[1:4]
+          suite = ExecutionResult("results/output.xml").suite
+          stats = suite.statistics
+          icon = {"PASS": "✅", "FAIL": "❌", "SKIP": "⏭️"}
+          print(f"## Run {run}/{runs}: {result} ({stats.passed} passed, {stats.failed} failed, {stats.skipped} skipped)\n")
+          print("| Suite | Test | Result | Time | Message |\n|---|---|---|---|---|")
+          for test in suite.all_tests:
+              message = test.message.replace("|", "/").replace("\n", " ")[:150]
+              print(f"| {test.parent.name} | {test.name} | {icon.get(test.status, test.status)} | {test.elapsed_time.total_seconds():.1f} s | {message} |")
+          print(f"\n{stats.passed}/{stats.passed + stats.failed}")
+          EOF
+          counts=$(tail -n 1 results/summary.md)
+          sed -i '$ d' results/summary.md
+
+          {
+            if [ "$RUN" = 1 ]; then
+              printf '_Robot Framework tests against the City of Tampere open APIs (data: City of Tampere and ITS Factory, CC BY 4.0). Light runs without a browser. The comparison table of the runs is in the Summary section at the end._\n\n'
+            fi
+            cat results/summary.md
+            printf '\n| | |\n|---|---|\n'
+            printf '| Runner | %s |\n' "$RUNNER"
+            printf '| Time (UTC) | %s–%s (%s s) |\n' "$started" "$ended" "$seconds"
+            printf '| Memory peak | %s |\n' "$mem_peak"
+            printf '| Image | `%s` (%s) |\n' "$IMAGE" "${IMAGE_VERSION:-version unknown}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          printf '| %s | %s | %s–%s | %s s | %s | %s | %s |\n' \
+            "$RUN" "$RUNNER" "$started" "$ended" "$seconds" "$counts" "$mem_peak" "$result" > "results/row-${RUN}.md"
+          exit "$rc"
+
+      - name: Save the results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: api-${{ matrix.run }}
+          path: results/
+          retention-days: 7
+
+  summary:
+    name: Summary
+    needs: api
+    if: always()
+    runs-on: [self-hosted, Linux, X64, api-demo]
+    timeout-minutes: 5
+    steps:
+      # Remove the previous run's results so no old rows end up in the table.
+      - name: Clear old results
+        run: rm -rf results
+
+      - name: Get the runs' results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: api-*
+          path: results
+
+      - name: Build the table
+        env:
+          RUNS: ${{ inputs.runs }}
+        run: |
+          {
+            echo "## API tests: ${RUNS} runs at the same time"
+            echo
+            echo "| Run | Runner | Time (UTC) | Duration | Tests passed | Memory peak | Result |"
+            echo "|---|---|---|---|---|---|---|"
+            cat results/api-*/row-*.md 2>/dev/null | sort -n -t '|' -k 2 || echo "| – | no results | | | | | |"
+            echo
+            echo "The tests call real public APIs, so a failure can also mean that a service was down or slow."
+          } >> "$GITHUB_STEP_SUMMARY"
