@@ -98,7 +98,8 @@ jobs:
           cpu_avg=$(awk -v c="$cpu_s" -v k="$seconds" 'BEGIN { printf "%.1f", (k > 0 ? c / k : 0) }')
           throttled_s=$(awk -v a="$throttled_start" -v b="$(counter throttled_usec $cg/cpu.stat)" 'BEGIN { printf "%.1f", (b - a) / 1e6 }')
           times=$(( $(counter nr_throttled $cg/cpu.stat) - times_start ))
-          limit=$(awk '{ if ($1 == "max") print "no limit"; else printf "%g", $1 / $2 }' $cg/cpu.max)
+          # CPU sharing weight: no CPU limit, the runs share the processors evenly.
+          limit=$(awk -v w="$(cat $cg/cpu.weight 2>/dev/null)" '{ if ($1 == "max") print "none, shared evenly (weight " w ")"; else printf "%g logical processors", $1 / $2 }' $cg/cpu.max)
           mem_peak=$(awk '{ printf "%.2f GiB", $1 / 1073741824 }' $cg/memory.peak 2>/dev/null || echo "unknown")
           mem_limit=$(awk '{ if ($1 == "max") print "no limit"; else printf "%.1f GiB", $1 / 1073741824 }' $cg/memory.max)
           oom=$(counter oom_kill $cg/memory.events)
@@ -119,7 +120,7 @@ jobs:
             printf '| Repo | %s |\n' "$REPO"
             printf '| Runner | %s |\n' "$RUNNER"
             printf '| Time (UTC) | %s–%s (%s s) |\n' "$started" "$ended" "$seconds"
-            printf '| Threads | %s (CPU limit of the run: %s logical processors) |\n' "$THREADS" "$limit"
+            printf '| Threads | %s (CPU limit of the run: %s) |\n' "$THREADS" "$limit"
             printf '| Computations | %s (%s rounds x %s threads) = **%s / min** |\n' "$computations" "$rounds" "$THREADS" "$per_min"
             printf '| Minute by minute | %s |\n' "$by_minute"
             printf '| CPU time | %s s = on average %s logical processors (limit %s) |\n' "$cpu_s" "$cpu_avg" "$limit"
