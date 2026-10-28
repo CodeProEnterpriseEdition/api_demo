@@ -12,7 +12,9 @@ Test Timeout        2 minutes
 Infobox Image Loads
     [Tags]    smoke
     Open Article    ${EN}/Finland    Finland
-    Get Property    css=table.infobox img >> nth=0    naturalWidth    >    0
+    # ${0} is a number: Get Property returns a number and does not convert the
+    # expected value.
+    Get Property    css=table.infobox img >> nth=0    naturalWidth    >    ${0}
 
 Images Load While Scrolling
     [Tags]    heavy
