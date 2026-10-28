@@ -112,7 +112,7 @@ jobs:
 
           {
             if [ "$RUN" = 1 ]; then
-              printf '_Headless Chromium computes in %s threads for %s min (no network), in its own container with the machine'"'"'s limits. Computations per minute tell how much work the run got done. Compare the same threads alone and at the same time as the other test repos. Minute by minute shows when the others started or ended. The comparison table is in the Summary section at the end._\n\n' "$THREADS" "$DURATION"
+              printf '_Headless Chromium computes in %s threads for %s min (no network), in its own container with the machine'"'"'s limits. Computations per minute tell how much work the run got done. Compare the same threads alone and at the same time as the other test repos. Minute by minute shows when the others started or ended. With 2 or 3 runs, the comparison table is in the Compare runs section at the end._\n\n' "$THREADS" "$DURATION"
             fi
             printf '## Run %s/%s: %s\n\n' "$RUN" "$RUNS" "$result"
             printf '| | |\n|---|---|\n'
@@ -145,10 +145,12 @@ jobs:
           path: results/
           retention-days: 7
 
+  # Comparison table of the runs. Only with 2 or 3 runs: a single run already
+  # has its own table above.
   summary:
-    name: Summary
+    name: Compare runs
     needs: load
-    if: always()
+    if: always() && inputs.runs != '1'
     runs-on: [self-hosted, Linux, X64, api-demo]
     timeout-minutes: 5
     steps:
@@ -171,17 +173,22 @@ jobs:
           DURATION: ${{ inputs.duration }}
           REPO: ${{ github.repository }}
         run: |
+          # The files are in results/load-N/, or directly in results/ when only
+          # one artifact was downloaded, so search the whole folder.
+          image="$(find results -name 'image-*.txt' -exec cat {} + 2>/dev/null | sort -u | paste -sd ';')"
+          rows="$(find results -name 'row-*.md' -exec cat {} + 2>/dev/null | sort -n -t '|' -k 2)"
           {
-            echo "## Load test: ${REPO}, ${RUNS} run(s), ${DURATION} min, ${THREADS} threads"
+            echo "## Load test: ${REPO}, ${RUNS} runs, ${DURATION} min, ${THREADS} threads"
             echo
-            echo "Image: $(cat results/load-*/image-*.txt 2>/dev/null | sort -u | paste -sd ';' || echo '?')"
+            echo "Image: ${image:-? (no run got as far as the test)}"
             echo
             echo "| Run | Runner | Time (UTC) | Duration | Threads | Computations / min | Minute by minute | Throttled by CPU limit | CPU avg. (logical) | Memory peak | Result |"
             echo "|---|---|---|---|---|---|---|---|---|---|---|"
-            cat results/load-*/row-*.md 2>/dev/null | sort -n -t '|' -k 2 || echo "| – | no results | | | | | | | | | |"
+            if [ -n "${rows}" ]; then
+              echo "${rows}"
+            else
+              echo "| – | ❌ no results: the runs failed before the test, e.g. the container did not start (see the runs' errors above) | | | | | | | | | |"
+            fi
             echo
-            echo "Computations / min tell how much work the run got done. Compare the same threads alone and with the other test repos running at the same time."
-            echo "Minute by minute shows the computations of each minute: a drop shows when other runs took a share of the machine."
-            echo "Throttling means the run would have wanted more processor than its CPU limit allowed."
-            echo "CPU means processing time of logical processors, not physical cores."
+            echo "Throttled = the run wanted more processor than its CPU limit allowed. CPU = logical processors, not physical cores."
           } >> "$GITHUB_STEP_SUMMARY"

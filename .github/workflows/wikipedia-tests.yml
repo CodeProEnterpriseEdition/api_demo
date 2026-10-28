@@ -1,0 +1,146 @@
+# Wikipedia tests: real Robot browser tests that read Wikipedia articles,
+# search, follow links and load large pages, like an ordinary test suite.
+# 20 tests in 5 files (tests/wikipedia). The same suite is in every test
+# repo, so the repos can be compared alone and at the same time.
+#
+# Tags select a part of the suite:
+#   one per file: articles, search, navigation, main-page, media
+#   others:       smoke (one quick test per file), heavy (large pages),
+#                 finnish (Finnish Wikipedia)
+# Examples: smoke, search, articlesANDfinnish, searchORnavigation; exclude heavy.
+
+name: "Wikipedia tests"
+run-name: "Wikipedia tests: ${{ inputs.include || 'all' }}${{ inputs.exclude && format(', without {0}', inputs.exclude) || '' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      include:
+        description: "Tags to run, empty = all 20 tests. E.g. smoke, search, articlesANDfinnish, searchORnavigation"
+        default: ""
+      exclude:
+        description: "Tags to leave out, empty = none. E.g. heavy"
+        default: ""
+      image:
+        description: "Test image (current = the version in use on the machine)"
+        default: "localhost:5000/robot-tests:current"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  wikipedia:
+    name: Wikipedia tests
+    runs-on: [self-hosted, Linux, X64, api-demo]
+    timeout-minutes: 30
+
+    container:
+      image: ${{ inputs.image }}
+
+    steps:
+      - name: Get the tests from the repo
+        uses: actions/checkout@v5
+
+      - name: Run the tests
+        env:
+          INCLUDE: ${{ inputs.include }}
+          EXCLUDE: ${{ inputs.exclude }}
+          IMAGE: ${{ inputs.image }}
+          REPO: ${{ github.repository }}
+          RUNNER: ${{ runner.name }}
+        run: |
+          set -eu
+          counter() { awk -v k="$1" '$1 == k { print $2 }' "$2"; }
+          cg=/sys/fs/cgroup
+          cpu_start=$(counter usage_usec $cg/cpu.stat)
+          throttled_start=$(counter throttled_usec $cg/cpu.stat)
+          start=$(date +%s)
+          started=$(date -u +%H:%M:%S)
+
+          set -- --outputdir results --name Wikipedia
+          [ -z "${INCLUDE}" ] || set -- "$@" --include "${INCLUDE}"
+          [ -z "${EXCLUDE}" ] || set -- "$@" --exclude "${EXCLUDE}"
+          set +e
+          robot "$@" tests/wikipedia
+          rc=$?
+          set -e
+
+          ended=$(date -u +%H:%M:%S)
+          seconds=$(( $(date +%s) - start ))
+          cpu_s=$(awk -v a="$cpu_start" -v b="$(counter usage_usec $cg/cpu.stat)" 'BEGIN { printf "%.0f", (b - a) / 1e6 }')
+          cpu_avg=$(awk -v c="$cpu_s" -v k="$seconds" 'BEGIN { printf "%.1f", (k > 0 ? c / k : 0) }')
+          throttled_s=$(awk -v a="$throttled_start" -v b="$(counter throttled_usec $cg/cpu.stat)" 'BEGIN { printf "%.1f", (b - a) / 1e6 }')
+          limit=$(awk '{ if ($1 == "max") print "no limit"; else printf "%g", $1 / $2 }' $cg/cpu.max)
+          mem_peak=$(awk '{ printf "%.2f GiB", $1 / 1073741824 }' $cg/memory.peak 2>/dev/null || echo "unknown")
+          mem_limit=$(awk '{ if ($1 == "max") print "no limit"; else printf "%.1f GiB", $1 / 1073741824 }' $cg/memory.max)
+          oom=$(counter oom_kill $cg/memory.events)
+          if [ -n "${IMAGE_VERSION:-}" ]; then version="${IMAGE_VERSION} (built ${IMAGE_BUILT:-?})"; else version="⚠️ unknown: the image has no version label"; fi
+
+          # Results by file and by test from Robot's output.xml.
+          mkdir -p results
+          python - > results/tests.md <<'PY'
+          import os
+          from robot.api import ExecutionResult
+
+          def seconds(item):
+              return f"{item.elapsed_time.total_seconds():.1f} s"
+
+          tests = []
+          if os.path.exists("results/output.xml"):
+              result = ExecutionResult("results/output.xml")
+              tests = list(result.suite.all_tests)
+              print("### By file\n")
+              print("| File | Tests | Passed | Failed | Duration |")
+              print("|---|---|---|---|---|")
+              for suite in result.suite.suites:
+                  s = suite.statistics
+                  print(f"| {suite.name} | {s.total} | {s.passed} | {s.failed} | {seconds(suite)} |")
+              print("\n### Tests\n")
+              print("| Test | File | Tags | Result | Duration |")
+              print("|---|---|---|---|---|")
+              for t in tests:
+                  mark = "✅ PASS" if t.passed else f"❌ {t.status}"
+                  print(f"| {t.name} | {t.parent.name} | {', '.join(sorted(t.tags))} | {mark} | {seconds(t)} |")
+              failed = [t for t in tests if t.failed]
+              if failed:
+                  print("\n### Failed tests\n")
+                  print("| Test | Message |")
+                  print("|---|---|")
+                  for t in failed:
+                      print(f"| {t.name} | {t.message.replace('|', '/').replace(chr(10), ' ')[:200]} |")
+          else:
+              print("No test results: Robot did not run the tests (see the step log).")
+          with open("results/counts.txt", "w") as f:
+              f.write(f"{sum(t.passed for t in tests)} {len(tests)}\n")
+          PY
+          read -r passed total < results/counts.txt
+          case "$rc" in
+            0) result="✅ PASS" ;;
+            25[2-5]) result="❌ ERROR: Robot did not run the tests (e.g. no test has the given tags)" ;;
+            *) result="❌ FAIL" ;;
+          esac
+
+          {
+            printf '## Wikipedia tests: %s (%s/%s passed)\n\n' "$result" "$passed" "$total"
+            printf '| | |\n|---|---|\n'
+            printf '| Repo | %s |\n' "$REPO"
+            printf '| Runner | %s |\n' "$RUNNER"
+            printf '| Tags | include: %s, exclude: %s |\n' "${INCLUDE:-all}" "${EXCLUDE:-none}"
+            printf '| Time (UTC) | %s–%s (%s s) |\n' "$started" "$ended" "$seconds"
+            printf '| CPU time | %s s = on average %s logical processors (limit %s), throttled %s s |\n' "$cpu_s" "$cpu_avg" "$limit" "$throttled_s"
+            printf '| Memory peak | %s (limit %s) |\n' "$mem_peak" "$mem_limit"
+            printf '| Out of memory (OOM) | %s times |\n' "$oom"
+            printf '| Image | `%s`, version %s |\n\n' "$IMAGE" "$version"
+            cat results/tests.md
+            printf '\n_Compare the durations alone and while the other test repos run at the same time. Tags: articles, search, navigation, main-page, media (one per file), smoke, heavy, finnish._\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Save the results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: wikipedia-results
+          path: results/
+          retention-days: 7
