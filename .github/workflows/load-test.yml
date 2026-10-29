@@ -33,16 +33,34 @@ on:
         options: ["1", "2", "3"]
         default: "1"
       image:
-        description: "Test image (current = the version in use on the machine; to try out a version, give it exactly, e.g. localhost:5000/robot-tests:2026.10.21-2)"
-        default: "localhost:5000/robot-tests:current"
-        required: true
+        description: "Test image. Empty = this repo's own image (docker/browser/, built on the machine when its files change). To try another one, give it, e.g. localhost:5000/robot-tests:current"
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
+  # The repo's own test image (docker/browser/): found in the machine's
+  # registry, or built there first if the files of the folder have changed.
+  image:
+    name: Test image
+    runs-on: [self-hosted, Linux, X64, api-demo]
+    timeout-minutes: 60
+    outputs:
+      image: ${{ inputs.image || steps.image.outputs.image }}
+    steps:
+      - name: Get the image folder from the repo
+        if: inputs.image == ''
+        uses: actions/checkout@v5
+
+      - name: Find or build the image
+        id: image
+        if: inputs.image == ''
+        run: bash .github/scripts/test-image.sh docker/browser
+
   load:
     name: Run ${{ matrix.run }}
+    needs: image
     runs-on: [self-hosted, Linux, X64, api-demo]
     timeout-minutes: 60
     strategy:
@@ -51,7 +69,7 @@ jobs:
         run: ${{ fromJSON(inputs.runs == '1' && '[1]' || inputs.runs == '2' && '[1,2]' || '[1,2,3]') }}
 
     container:
-      image: ${{ inputs.image }}
+      image: ${{ needs.image.outputs.image }}
 
     steps:
       - name: Get the test from the repo
@@ -63,7 +81,7 @@ jobs:
           RUNS: ${{ inputs.runs }}
           THREADS: ${{ inputs.threads }}
           DURATION: ${{ inputs.duration }}
-          IMAGE: ${{ inputs.image }}
+          IMAGE: ${{ needs.image.outputs.image }}
           REPO: ${{ github.repository }}
           RUNNER: ${{ runner.name }}
         run: |
@@ -121,11 +139,11 @@ jobs:
           pids_limit=$(cat $cg/pids.max 2>/dev/null || echo "unknown")
           pids_refused=$(counter max $cg/pids.events 2>/dev/null || echo "?")
           if [ "$rc" -eq 0 ]; then result="✅ PASS"; else result="❌ FAIL"; fi
-          # The build workflow writes the version into the image (IMAGE_VERSION).
+          # The image build writes the version into the image (IMAGE_VERSION).
           if [ -n "${IMAGE_VERSION:-}" ]; then
             version="${IMAGE_VERSION} (built ${IMAGE_BUILT:-?})"
           else
-            version="⚠️ unknown: the image has no version label (not built with 3 Image: build)"
+            version="⚠️ unknown: the image has no version label"
           fi
 
           {

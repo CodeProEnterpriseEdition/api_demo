@@ -1,0 +1,10 @@
+# Every Python package of this repo's API test image, pinned. uv installs
+# exactly these and checks that nothing is missing (--strict).
+# To upgrade, change the numbers: the next test run builds a new image.
+certifi==2026.10.23
+charset-normalizer==3.5.2
+idna==3.20
+requests==2.34.2
+robotframework==7.5
+robotframework-requests==0.9.7
+urllib3==2.8.0

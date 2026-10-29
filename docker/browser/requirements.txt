@@ -1,0 +1,6 @@
+# Python packages of this repo's test image. Robot Framework and its libraries
+# are pinned; the packages they depend on are installed at the newest versions
+# they allow. To upgrade, change a number: the next test run builds a new image.
+robotframework==7.5
+robotframework-browser==20.6.0
+robotframework-requests==0.9.7

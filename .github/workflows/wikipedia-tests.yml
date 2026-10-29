@@ -22,21 +22,39 @@ on:
         description: "Tags to leave out, empty = none. E.g. heavy"
         default: ""
       image:
-        description: "Test image (current = the version in use on the machine)"
-        default: "localhost:5000/robot-tests:current"
-        required: true
+        description: "Test image. Empty = this repo's own image (docker/browser/, built on the machine when its files change). To try another one, give it, e.g. localhost:5000/robot-tests:current"
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
+  # The repo's own test image (docker/browser/): found in the machine's
+  # registry, or built there first if the files of the folder have changed.
+  image:
+    name: Test image
+    runs-on: [self-hosted, Linux, X64, api-demo]
+    timeout-minutes: 60
+    outputs:
+      image: ${{ inputs.image || steps.image.outputs.image }}
+    steps:
+      - name: Get the image folder from the repo
+        if: inputs.image == ''
+        uses: actions/checkout@v5
+
+      - name: Find or build the image
+        id: image
+        if: inputs.image == ''
+        run: bash .github/scripts/test-image.sh docker/browser
+
   wikipedia:
     name: Wikipedia tests
+    needs: image
     runs-on: [self-hosted, Linux, X64, api-demo]
     timeout-minutes: 30
 
     container:
-      image: ${{ inputs.image }}
+      image: ${{ needs.image.outputs.image }}
 
     steps:
       - name: Get the tests from the repo
@@ -46,7 +64,7 @@ jobs:
         env:
           INCLUDE: ${{ inputs.include }}
           EXCLUDE: ${{ inputs.exclude }}
-          IMAGE: ${{ inputs.image }}
+          IMAGE: ${{ needs.image.outputs.image }}
           REPO: ${{ github.repository }}
           RUNNER: ${{ runner.name }}
         run: |
