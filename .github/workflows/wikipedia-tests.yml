@@ -76,6 +76,11 @@ jobs:
           mem_peak=$(awk '{ printf "%.2f GiB", $1 / 1073741824 }' $cg/memory.peak 2>/dev/null || echo "unknown")
           mem_limit=$(awk '{ if ($1 == "max") print "no limit"; else printf "%.1f GiB", $1 / 1073741824 }' $cg/memory.max)
           oom=$(counter oom_kill $cg/memory.events)
+          # Processes and threads of the whole job: peak, and how many new ones
+          # the limit refused (pids.events max).
+          pids_peak=$(cat $cg/pids.peak 2>/dev/null || echo "unknown")
+          pids_limit=$(cat $cg/pids.max 2>/dev/null || echo "unknown")
+          pids_refused=$(counter max $cg/pids.events 2>/dev/null || echo "?")
           if [ -n "${IMAGE_VERSION:-}" ]; then version="${IMAGE_VERSION} (built ${IMAGE_BUILT:-?})"; else version="⚠️ unknown: the image has no version label"; fi
 
           # Results by file and by test from Robot's output.xml.
@@ -132,6 +137,7 @@ jobs:
             printf '| CPU time | %s s = on average %s logical processors (limit %s), throttled %s s |\n' "$cpu_s" "$cpu_avg" "$limit" "$throttled_s"
             printf '| Memory peak | %s (limit %s) |\n' "$mem_peak" "$mem_limit"
             printf '| Out of memory (OOM) | %s times |\n' "$oom"
+            printf '| Processes and threads peak | %s (limit %s), refused at the limit %s times |\n' "$pids_peak" "$pids_limit" "$pids_refused"
             printf '| Image | `%s`, version %s |\n\n' "$IMAGE" "$version"
             cat results/tests.md
             printf '\n_Compare the durations alone and while the other test repos run at the same time. Tags: articles, search, navigation, main-page, media (one per file), smoke, heavy, finnish._\n'

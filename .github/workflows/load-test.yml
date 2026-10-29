@@ -1,8 +1,11 @@
 # Load test: the same Robot test (tests/load-test) computes in headless
 # Chromium for the given time, in its own container with the machine's
-# limits. Threads set how much processor the run wants: 1 = half of a CPU
-# limit of 2, 2 = the whole limit, 4 = more than the limit (the machine holds
-# it back). The result is computations per minute, also minute by minute.
+# limits. Threads set how much processor the run wants: one thread keeps one
+# CPU (logical processor) busy. In CPU sharing weight (default) a run has no
+# CPU limit and may use all free CPUs. In quota the limit of a run is 2 CPUs,
+# so 1 = half of it, 2 = the whole limit, 3 or 4 = more than the limit (the
+# machine holds it back to 2 CPUs). The result is computations per minute,
+# also minute by minute.
 #
 # Comparison: run it alone first, then at the same time in the other test
 # repos (each has the same test). If the numbers drop when the others run,
@@ -16,9 +19,9 @@ on:
   workflow_dispatch:
     inputs:
       threads:
-        description: "Threads the test computes in: 1 = half of a CPU limit of 2, 2 = the whole limit, 4 = more than the limit"
+        description: "Threads the test computes in. One thread keeps one CPU (logical processor) busy. CPU sharing weight (default): no limit per run, a run may use all free CPUs. Quota: the limit of a run is 2 CPUs, so 1 = half of it, 2 = the whole limit, 3 or 4 = more than the limit (the run is held back to 2 CPUs, the Summary says so)"
         type: choice
-        options: ["2", "1", "4"]
+        options: ["2", "1", "3", "4"]
         default: "2"
       duration:
         description: "Duration of one run in minutes"
@@ -100,9 +103,23 @@ jobs:
           times=$(( $(counter nr_throttled $cg/cpu.stat) - times_start ))
           # CPU sharing weight: no CPU limit, the runs share the processors evenly.
           limit=$(awk -v w="$(cat $cg/cpu.weight 2>/dev/null)" '{ if ($1 == "max") print "none, shared evenly (weight " w ")"; else printf "%g logical processors", $1 / $2 }' $cg/cpu.max)
+          # More threads than the CPU limit is not refused: the machine holds the
+          # run back to its limit. Say it plainly in the Summary and as a notice.
+          note=""
+          limit_cpus=$(awk '$1 != "max" { printf "%g", $1 / $2 }' $cg/cpu.max)
+          if [ -n "$limit_cpus" ] && awk -v t="$THREADS" -v l="$limit_cpus" 'BEGIN { exit !(t > l) }'; then
+            msg="${THREADS} threads, but the CPU limit of the run is ${limit_cpus} logical processors, so the machine held the run back to its limit (throttled ${throttled_s} s). This is expected: the run does not fail, its threads share the limit and each computes slower."
+            note="⚠️ ${msg}"
+            echo "::notice title=Run ${RUN}: more threads than the CPU limit::${msg}"
+          fi
           mem_peak=$(awk '{ printf "%.2f GiB", $1 / 1073741824 }' $cg/memory.peak 2>/dev/null || echo "unknown")
           mem_limit=$(awk '{ if ($1 == "max") print "no limit"; else printf "%.1f GiB", $1 / 1073741824 }' $cg/memory.max)
           oom=$(counter oom_kill $cg/memory.events)
+          # Processes and threads of the whole job: peak, and how many new ones
+          # the limit refused (pids.events max).
+          pids_peak=$(cat $cg/pids.peak 2>/dev/null || echo "unknown")
+          pids_limit=$(cat $cg/pids.max 2>/dev/null || echo "unknown")
+          pids_refused=$(counter max $cg/pids.events 2>/dev/null || echo "?")
           if [ "$rc" -eq 0 ]; then result="✅ PASS"; else result="❌ FAIL"; fi
           # The build workflow writes the version into the image (IMAGE_VERSION).
           if [ -n "${IMAGE_VERSION:-}" ]; then
@@ -127,8 +144,12 @@ jobs:
             printf '| Throttled by CPU limit | %s s (%s times) |\n' "$throttled_s" "$times"
             printf '| Memory peak | %s (limit %s) |\n' "$mem_peak" "$mem_limit"
             printf '| Out of memory (OOM) | %s times |\n' "$oom"
+            printf '| Processes and threads peak | %s (limit %s), refused at the limit %s times |\n' "$pids_peak" "$pids_limit" "$pids_refused"
             printf '| Image | `%s` |\n' "$IMAGE"
             printf '| Image version | %s |\n' "$version"
+            if [ -n "$note" ]; then
+              printf '\n%s\n' "$note"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Image and row for the Summary job's table.
