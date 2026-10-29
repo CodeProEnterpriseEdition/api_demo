@@ -10,10 +10,10 @@
 # Comparison: run it alone first, then at the same time in the other test
 # repos (each has the same test). If the numbers drop when the others run,
 # the runs slow each other down despite their limits (shared physical cores,
-# disk). Start Maintenance: load monitor first to see the whole machine.
+# disk). Start 1 Check: load monitor first to see the whole machine.
 
-name: "Load test: parallel Robot runs"
-run-name: "Load test: ${{ inputs.runs }} x ${{ inputs.duration }} min, ${{ inputs.threads }} threads"
+name: "Test: load, parallel Robot runs"
+run-name: "Test: load, ${{ inputs.runs }} x ${{ inputs.duration }} min, ${{ inputs.threads }} threads"
 
 on:
   workflow_dispatch:
@@ -125,7 +125,7 @@ jobs:
           if [ -n "${IMAGE_VERSION:-}" ]; then
             version="${IMAGE_VERSION} (built ${IMAGE_BUILT:-?})"
           else
-            version="⚠️ unknown: the image has no version label (not built with Maintenance: build test image)"
+            version="⚠️ unknown: the image has no version label (not built with 3 Image: build)"
           fi
 
           {

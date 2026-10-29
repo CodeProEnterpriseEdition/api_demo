@@ -16,9 +16,9 @@ saman testikoneen (win-agent-15).
 
 | Työnkulku | Mitä tekee |
 |---|---|
-| **API tests: Tampere open data** | API-testit 1–3 kertaa, jokainen ajo omassa kontissaan koneen rajoilla. Summary-sivulla on jokaisen testin tulos ja lopuksi ajojen vertailutaulukko. Ajaa vain `tests/*.robot`, ei kuormatestiä. |
-| **Wikipedia tests** | Oikeat selaintestit Wikipediaa vasten: 20 testiä viidessä tiedostossa (`tests/wikipedia/`), tagit `articles`, `search`, `navigation`, `main-page`, `media`, `smoke`, `heavy` ja `finnish`. Kentillä include ja exclude ajetaan osa testeistä, esim. `smoke`. Sama testisarja on repoissa oma_runner ja robot_demo. |
-| **Load test: parallel Robot runs** | Sama kuormatesti kuin repoissa oma_runner ja robot_demo (`tests/load-test/`), jotta kolmen repon ajoja voi verrata yksin ja rinnakkain. Säikeet: 1 = puolet ajon CPU-rajasta, 2 = koko raja, 4 = yli rajan. Summary näyttää laskennat minuutissa, myös minuutti minuutilta. |
+| **Test: API, Tampere open data** | API-testit 1–3 kertaa, jokainen ajo omassa kontissaan koneen rajoilla. Summary-sivulla on jokaisen testin tulos ja lopuksi ajojen vertailutaulukko. Ajaa vain `tests/*.robot`, ei kuormatestiä. |
+| **Test: Wikipedia** | Oikeat selaintestit Wikipediaa vasten: 20 testiä viidessä tiedostossa (`tests/wikipedia/`), tagit `articles`, `search`, `navigation`, `main-page`, `media`, `smoke`, `heavy` ja `finnish`. Kentillä include ja exclude ajetaan osa testeistä, esim. `smoke`. Sama testisarja on repoissa oma_runner ja robot_demo. |
+| **Test: load, parallel Robot runs** | Sama kuormatesti kuin repoissa oma_runner ja robot_demo (`tests/load-test/`), jotta kolmen repon ajoja voi verrata yksin ja rinnakkain. Säikeet: 1 = puolet ajon CPU-rajasta, 2 = koko raja, 4 = yli rajan. Summary näyttää laskennat minuutissa, myös minuutti minuutilta. |
 
 ## Testit (`tests/`)
 

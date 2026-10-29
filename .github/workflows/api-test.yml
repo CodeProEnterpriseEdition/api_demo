@@ -4,8 +4,8 @@
 # at the same time to see how light runs share the machine with the heavier
 # test repos. The Summary job collects the runs into one table.
 
-name: "API tests: Tampere open data"
-run-name: "API tests: ${{ inputs.runs }} runs"
+name: "Test: API, Tampere open data"
+run-name: "Test: API, ${{ inputs.runs }} runs"
 
 on:
   workflow_dispatch:

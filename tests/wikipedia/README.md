@@ -5,7 +5,7 @@ lukeminen, haku, linkit, etusivu ja isot sivut. 20 testiä viidessä
 tiedostossa. Sama testisarja on kaikissa kolmessa testirepossa (oma_runner,
 robot_demo, api_demo), joten ajoja voi verrata yksin ja yhtä aikaa.
 
-Työnkulku: **Actions › Wikipedia tests**. Summary näyttää jokaisen
+Työnkulku: **Actions › Test: Wikipedia**. Summary näyttää jokaisen
 tiedoston ja testin keston, CPU-ajan, muistihuipun ja epäonnistuneiden
 testien viestit.
 

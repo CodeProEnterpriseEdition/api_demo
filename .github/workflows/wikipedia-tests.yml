@@ -9,8 +9,8 @@
 #                 finnish (Finnish Wikipedia)
 # Examples: smoke, search, articlesANDfinnish, searchORnavigation; exclude heavy.
 
-name: "Wikipedia tests"
-run-name: "Wikipedia tests: ${{ inputs.include || 'all' }}${{ inputs.exclude && format(', without {0}', inputs.exclude) || '' }}"
+name: "Test: Wikipedia"
+run-name: "Test: Wikipedia, ${{ inputs.include || 'all' }}${{ inputs.exclude && format(', without {0}', inputs.exclude) || '' }}"
 
 on:
   workflow_dispatch:
