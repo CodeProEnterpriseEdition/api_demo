@@ -8,13 +8,26 @@
 #
 # Run by the job "Test image" of the test workflows, directly on the machine:
 #   bash .github/scripts/test-image.sh docker/browser
-# The image is localhost:5000/<repo>-<folder>, e.g. robot-demo-browser. Writes
-# image=<image:tag> to $GITHUB_OUTPUT and a short table to the Summary page.
+# The folder is the build context, so the Dockerfile copies files of the folder.
+#
+# Files from elsewhere in the repo, e.g. a uv project's pyproject.toml and
+# uv.lock in the repo root, are given after the folder:
+#   bash .github/scripts/test-image.sh docker/api pyproject.toml uv.lock
+# Then the build context is the repo root, but it holds only the folder and the
+# files given, so the Dockerfile copies them with their paths from the root
+# (COPY pyproject.toml uv.lock ./). The hash covers the same files, and a file
+# the Dockerfile copies but that is not given fails the build.
+#
+# The image is localhost:5000/<repo>-<folder>, e.g. my-tests-browser for the
+# folder docker/browser/ of the repo my-tests. Writes image=<image:tag> to
+# $GITHUB_OUTPUT and a short table to the Summary page.
 
 set -euo pipefail
 
 DIR="${1:?give the image folder, e.g. docker/browser}"
 DIR="${DIR%/}"
+shift
+EXTRA=("$@")
 REPO="${GITHUB_REPOSITORY:-local/$(basename "$(pwd)")}"
 NAME="$(tr 'A-Z_' 'a-z-' <<< "$(basename "${REPO}")-$(basename "${DIR}")")"
 REGISTRY="localhost:5000"
@@ -48,10 +61,20 @@ digest() {
 }
 
 [[ -f "${DIR}/Dockerfile" ]] || die "${DIR}/Dockerfile does not exist in the repo"
+for f in "${EXTRA[@]}"; do
+    [[ "${f}" != /* && "/${f}/" != */../* ]] || die "give the files with their paths from the repo root (got: ${f})"
+    [[ -e "${f}" ]] || die "${f} does not exist in the repo"
+done
 curl -fsS "http://${REGISTRY}/v2/" >/dev/null || die "the machine's local registry does not respond (${REGISTRY})"
 
-# Hash of the folder: the names and contents of its files.
-HASH="$(cd "${DIR}" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
+# Hash of the files the build sees: their names and contents.
+if (( ${#EXTRA[@]} == 0 )); then
+    HASH="$(cd "${DIR}" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
+else
+    HASH="$(find "${DIR}" "${EXTRA[@]}" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
+fi
+FILES="${DIR}/${EXTRA[*]:+ ${EXTRA[*]}}"
+FILES_MD="$(printf '`%s` ' "${DIR}/" "${EXTRA[@]}" | sed 's/ $//')"
 
 # One job at a time looks for or builds an image of this name. The others wait
 # here and then find the image ready.
@@ -65,7 +88,7 @@ if [[ -n "${TAG}" ]]; then
 else
     TAG="$(date +%Y.%m.%d)-${HASH}"
     START="$(date +%s)"
-    echo "== Building ${REGISTRY}/${NAME}:${TAG} from ${DIR}/ =="
+    echo "== Building ${REGISTRY}/${NAME}:${TAG} from ${FILES} =="
     # Version and build time also inside the image, if the Dockerfile has the
     # ARGs, so a test run can show which image it used.
     OPTIONS=(--pull --label "runner-kit.source=${REPO}/${DIR}"
@@ -75,8 +98,19 @@ else
     if docker buildx version >/dev/null 2>&1; then
         OPTIONS+=(--provenance=false)
     fi
-    docker build "${OPTIONS[@]}" -t "${REGISTRY}/${NAME}:${TAG}" "${DIR}" \
-        || die "building ${NAME} from ${DIR}/ failed, see the step log"
+    if (( ${#EXTRA[@]} == 0 )); then
+        CONTEXT="${DIR}"
+        DOCKERFILE="${DIR}/Dockerfile"
+    else
+        # A context of only the folder and the files given, with their paths
+        # from the repo root.
+        CONTEXT="$(mktemp -d)"
+        trap 'rm -rf "${CONTEXT}"' EXIT
+        tar -cf - "${DIR}" "${EXTRA[@]}" | tar -xf - -C "${CONTEXT}"
+        DOCKERFILE="${CONTEXT}/${DIR}/Dockerfile"
+    fi
+    docker build "${OPTIONS[@]}" -f "${DOCKERFILE}" -t "${REGISTRY}/${NAME}:${TAG}" "${CONTEXT}" \
+        || die "building ${NAME} from ${FILES} failed, see the step log"
     docker push "${REGISTRY}/${NAME}:${TAG}" || die "pushing ${NAME} to the local registry failed"
     STATE="built now ($(( $(date +%s) - START )) s)"
 
@@ -107,11 +141,11 @@ echo "image=${IMAGE}" >> "${OUTPUT}"
     echo
     echo "| | |"
     echo "|---|---|"
-    echo "| Image folder | \`${DIR}/\` (hash ${HASH}) |"
+    echo "| Image files | ${FILES_MD} (hash ${HASH}) |"
     echo "| Image | ${STATE} |"
     if (( ${#REMOVED[@]} > 0 )); then
         echo "| Removed old versions | ${REMOVED[*]} |"
     fi
     echo
-    echo "_The image is built again only when the files of \`${DIR}/\` change._"
+    echo "_The image is built again only when these files change._"
 } >> "${SUMMARY}"

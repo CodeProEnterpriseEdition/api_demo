@@ -10,7 +10,7 @@ saman testikoneen (win-agent-15).
 |---|---|
 | Runner | `runner-api-demo` (koneen vaihe 4, testirepo) |
 | Label | `api-demo` |
-| Testikuva | `localhost:5000/robot-tests:current` (koneen paikallinen rekisteri) |
+| Testikuvat | omat kuvat, jotka testityönkulkujen jobi *Test image* rakentaa, kun kansion tiedostot muuttuvat: `localhost:5000/api-demo-api` kansiosta `docker/api/` (API-testit, uv) ja `localhost:5000/api-demo-browser` kansiosta `docker/browser/` (kuorma- ja Wikipedia-testit) |
 
 ## Työnkulut
 
