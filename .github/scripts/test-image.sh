@@ -48,10 +48,32 @@ die() {
     exit 1
 }
 
-# Versions of the image (YYYY.MM.DD-hash), oldest first.
-versions() {
+# Tags of the image's versions (YYYY.MM.DD-hash), in no particular order.
+version_tags() {
     curl -fsS "http://${REGISTRY}/v2/${NAME}/tags/list" 2>/dev/null \
-        | jq -r '.tags // [] | .[]' | grep -E '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{12}$' | sort || true
+        | jq -r '.tags // [] | .[]' | grep -E '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{12}$' || true
+}
+
+# Build time of a version (created in the image config, UTC). Empty if unknown.
+built() {
+    local manifest
+    manifest="$(curl -fsS "${MANIFEST_TYPES[@]}" "http://${REGISTRY}/v2/${NAME}/manifests/$1" 2>/dev/null)" || return 0
+    # An image built for several platforms: the linux/amd64 one.
+    if [[ "$(jq -r '.manifests | type' <<< "${manifest}")" == array ]]; then
+        manifest="$(curl -fsS "${MANIFEST_TYPES[@]}" "http://${REGISTRY}/v2/${NAME}/manifests/$(jq -r \
+            'first(.manifests[] | select(.platform.architecture == "amd64")) | .digest' <<< "${manifest}")" 2>/dev/null)" || return 0
+    fi
+    curl -fsSL "http://${REGISTRY}/v2/${NAME}/blobs/$(jq -r '.config.digest' <<< "${manifest}")" 2>/dev/null \
+        | jq -r '.created // empty' 2>/dev/null || true
+}
+
+# Versions of the image, oldest first by build time. The date in the tag is
+# not enough: versions built on the same day differ only by their hash.
+versions() {
+    local tag
+    for tag in $(version_tags); do
+        printf '%s %s\n' "$(built "${tag}")" "${tag}"
+    done | sort | awk '{ print $NF }'
 }
 
 # Manifest digest of a tag. Empty if the tag does not exist.
@@ -81,7 +103,7 @@ FILES_MD="$(printf '`%s` ' "${DIR}/" "${EXTRA[@]}" | sed 's/ $//')"
 exec 9> "/tmp/test-image-${NAME}.lock"
 flock -w 3600 9 || die "waited an hour for another build of ${NAME}"
 
-TAG="$(versions | grep -E -- "-${HASH}$" | tail -n 1 || true)"
+TAG="$(version_tags | grep -E -- "-${HASH}$" | tail -n 1 || true)"
 REMOVED=()
 if [[ -n "${TAG}" ]]; then
     STATE="found in the registry, not built"
